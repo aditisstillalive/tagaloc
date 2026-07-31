@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import sharp from "sharp";
 
+const GOOGLE_URL = "https://maps.googleapis.com/maps/api/geocode/json";
 const MAPBOX_URL = "https://api.mapbox.com/geocoding/v5/mapbox.places";
 
 interface GeocodeResult {
@@ -10,13 +11,50 @@ interface GeocodeResult {
 }
 
 async function geocode(location: string): Promise<GeocodeResult> {
-  const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
-  if (!token) {
-    throw new Error("MAPBOX_ACCESS_TOKEN not configured");
+  const googleKey = process.env.GOOGLE_GEOCODING_API_KEY;
+  if (googleKey) {
+    return geocodeGoogle(location, googleKey);
   }
 
-  const encoded = encodeURIComponent(location);
-  const url = `${MAPBOX_URL}/${encoded}.json?access_token=${token}&country=id&types=place,locality,region,district&limit=1&language=id`;
+  const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
+  if (mapboxToken) {
+    return geocodeMapbox(location, mapboxToken);
+  }
+
+  throw new Error("No geocoding API key configured");
+}
+
+async function geocodeGoogle(location: string, key: string): Promise<GeocodeResult> {
+  const url = `${GOOGLE_URL}?address=${encodeURIComponent(location)}&region=id&key=${key}`;
+
+  const res = await fetch(url);
+
+  if (!res.ok) {
+    throw new Error(`Geocoding failed: ${res.status} ${res.statusText}`);
+  }
+
+  const data = (await res.json()) as {
+    status: string;
+    results: Array<{
+      formatted_address: string;
+      geometry: { location: { lat: number; lng: number } };
+    }>;
+  };
+
+  if (data.status !== "OK" || data.results.length === 0) {
+    throw new Error(`Location not found: "${location}"`);
+  }
+
+  const r = data.results[0];
+  return {
+    place_name: r.formatted_address,
+    lat: String(r.geometry.location.lat),
+    lon: String(r.geometry.location.lng),
+  };
+}
+
+async function geocodeMapbox(location: string, token: string): Promise<GeocodeResult> {
+  const url = `${MAPBOX_URL}/${encodeURIComponent(location)}.json?access_token=${token}&country=id&limit=1&language=id`;
 
   const res = await fetch(url);
 
