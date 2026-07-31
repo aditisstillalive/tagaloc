@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import sharp from "sharp";
 
+export const runtime = "nodejs"; // sharp needs Node.js, not Edge
+export const maxDuration = 30; // seconds — image processing needs time
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
 const GOOGLE_URL = "https://maps.googleapis.com/maps/api/geocode/json";
 const MAPBOX_URL = "https://api.mapbox.com/geocoding/v5/mapbox.places";
 
@@ -138,6 +143,13 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
+    if (imageFile.size > MAX_FILE_SIZE) {
+      return NextResponse.json(
+        { error: "Image must be under 10MB." },
+        { status: 400 },
+      );
+    }
+
     const locationTrimmed = location.trim();
     if (locationTrimmed.length === 0) {
       return NextResponse.json({ error: "Location cannot be empty." }, { status: 400 });
@@ -166,13 +178,13 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     const watermarked = await sharp(imageBuffer)
       .composite([{ input: svgBuffer, top: 0, left: 0 }])
-      .png()
+      .jpeg({ quality: 85, mozjpeg: true })
       .toBuffer();
 
     return new NextResponse(watermarked, {
       headers: {
-        "Content-Type": "image/png",
-        "Content-Disposition": `inline; filename="tagaloc-${Date.now()}.png"`,
+        "Content-Type": "image/jpeg",
+        "Content-Disposition": `inline; filename="tagaloc-${Date.now()}.jpg"`,
       },
     });
   } catch (err) {
