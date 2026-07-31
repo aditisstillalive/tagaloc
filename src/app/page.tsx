@@ -4,6 +4,73 @@
 import { useState, useRef } from "react";
 import LocationPicker from "./components/LocationPicker";
 
+function formatCoordinate(value: number, decimals: number): string {
+  return value.toFixed(decimals);
+}
+
+async function applyWatermark(
+  imageFile: File,
+  lat: number,
+  lng: number,
+): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(imageFile);
+
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+
+      const canvas = document.createElement("canvas");
+      canvas.width = img.width;
+      canvas.height = img.height;
+
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        reject(new Error("Canvas not supported"));
+        return;
+      }
+
+      // Draw original image
+      ctx.drawImage(img, 0, 0);
+
+      // Calculate watermark size
+      const fontSize = Math.max(18, Math.round(Math.min(img.width, img.height) * 0.035));
+      const padding = Math.round(fontSize * 1.2);
+      const text = `${formatCoordinate(lat, 6)}, ${formatCoordinate(lng, 6)}`;
+
+      ctx.font = `${fontSize}px monospace`;
+      ctx.textAlign = "right";
+      ctx.textBaseline = "bottom";
+
+      // Stroke outline
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
+      ctx.lineWidth = 3;
+      ctx.lineJoin = "round";
+      ctx.strokeText(text, img.width - padding, img.height - padding);
+
+      // Fill text
+      ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
+      ctx.fillText(text, img.width - padding, img.height - padding);
+
+      canvas.toBlob(
+        (blob) => {
+          if (blob) resolve(blob);
+          else reject(new Error("Failed to create image"));
+        },
+        "image/jpeg",
+        0.92,
+      );
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Failed to load image"));
+    };
+
+    img.src = url;
+  });
+}
+
 export default function Home() {
   const [image, setImage] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
@@ -56,27 +123,11 @@ export default function Home() {
     }
 
     try {
-      const formData = new FormData();
-      formData.append("image", image);
-      // Send coordinates + name — API route will use the name for display
-      formData.append("location", pickedName);
-
-      const res = await fetch("/api/watermark", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({ error: "Request failed" }));
-        setError(body.error ?? "Something went wrong.");
-        return;
-      }
-
-      const blob = await res.blob();
+      const blob = await applyWatermark(image, pickedLat, pickedLng);
       const url = URL.createObjectURL(blob);
       setWatermarkedUrl(url);
-    } catch {
-      setError("Network error. Please try again.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to process image.");
     } finally {
       setLoading(false);
     }
@@ -118,7 +169,7 @@ export default function Home() {
             <div className="flex gap-3">
               <a
                 href={watermarkedUrl}
-                download="tagaloc.png"
+                download="tagaloc.jpg"
                 className="flex-1 text-center py-3 px-4 rounded-lg bg-zinc-900 text-white font-medium hover:bg-zinc-800 transition-colors dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
               >
                 Download
