@@ -1,37 +1,46 @@
 import { NextResponse } from "next/server";
 import sharp from "sharp";
 
-const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
+const MAPBOX_URL = "https://api.mapbox.com/geocoding/v5/mapbox.places";
 
 interface GeocodeResult {
   lat: string;
   lon: string;
-  display_name: string;
+  place_name: string;
 }
 
 async function geocode(location: string): Promise<GeocodeResult> {
-  const url = new URL(NOMINATIM_URL);
-  url.searchParams.set("q", location);
-  url.searchParams.set("format", "json");
-  url.searchParams.set("limit", "1");
+  const token = process.env.MAPBOX_ACCESS_TOKEN;
+  if (!token) {
+    throw new Error("MAPBOX_ACCESS_TOKEN not configured");
+  }
 
-  const res = await fetch(url.toString(), {
-    headers: {
-      "User-Agent": "Tagaloc/1.0 (watermark app)",
-      "Accept-Language": "en",
-    },
-  });
+  const encoded = encodeURIComponent(location);
+  const url = `${MAPBOX_URL}/${encoded}.json?access_token=${token}&country=id&types=place,locality,region,district&limit=1&language=id`;
+
+  const res = await fetch(url);
 
   if (!res.ok) {
     throw new Error(`Geocoding failed: ${res.status} ${res.statusText}`);
   }
 
-  const results = (await res.json()) as GeocodeResult[];
-  if (results.length === 0) {
+  const data = (await res.json()) as {
+    features: Array<{
+      place_name: string;
+      center: [number, number]; // [lng, lat]
+    }>;
+  };
+
+  if (data.features.length === 0) {
     throw new Error(`Location not found: "${location}"`);
   }
 
-  return results[0];
+  const feature = data.features[0];
+  return {
+    place_name: feature.place_name,
+    lat: String(feature.center[1]),
+    lon: String(feature.center[0]),
+  };
 }
 
 function formatCoordinate(value: string, decimals: number): string {

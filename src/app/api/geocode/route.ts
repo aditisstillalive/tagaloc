@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
+const MAPBOX_URL = "https://api.mapbox.com/geocoding/v5/mapbox.places";
 
 interface Suggestion {
   label: string;
@@ -16,31 +16,32 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.json({ suggestions: [] });
   }
 
-  try {
-    const url = new URL(NOMINATIM_URL);
-    url.searchParams.set("q", q.trim());
-    url.searchParams.set("format", "json");
-    url.searchParams.set("limit", "5");
-    url.searchParams.set("accept-language", "en");
+  const token = process.env.MAPBOX_ACCESS_TOKEN;
+  if (!token) {
+    return NextResponse.json({ suggestions: [] });
+  }
 
-    const res = await fetch(url.toString(), {
-      headers: { "User-Agent": "Tagaloc/1.0 (watermark app)" },
-    });
+  try {
+    const encoded = encodeURIComponent(q.trim());
+    const url = `${MAPBOX_URL}/${encoded}.json?access_token=${token}&country=id&types=place,locality,region,district&autocomplete=true&limit=5&language=id`;
+
+    const res = await fetch(url);
 
     if (!res.ok) {
       return NextResponse.json({ suggestions: [] });
     }
 
-    const results = (await res.json()) as Array<{
-      display_name: string;
-      lat: string;
-      lon: string;
-    }>;
+    const data = (await res.json()) as {
+      features: Array<{
+        place_name: string;
+        center: [number, number]; // [lng, lat]
+      }>;
+    };
 
-    const suggestions: Suggestion[] = results.map((r) => ({
-      label: r.display_name,
-      lat: r.lat,
-      lon: r.lon,
+    const suggestions: Suggestion[] = data.features.map((f) => ({
+      label: f.place_name,
+      lat: String(f.center[1]),
+      lon: String(f.center[0]),
     }));
 
     return NextResponse.json({ suggestions });
