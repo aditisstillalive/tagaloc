@@ -8,8 +8,22 @@ function formatCoordinate(value: number, decimals: number): string {
   return value.toFixed(decimals);
 }
 
+function formatDatetime(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function nowISO(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 async function applyWatermark(
   imageFile: File,
+  datetime: string,
+  placeName: string,
   lat: number,
   lng: number,
 ): Promise<Blob> {
@@ -33,24 +47,32 @@ async function applyWatermark(
       // Draw original image
       ctx.drawImage(img, 0, 0);
 
-      // Calculate watermark size
-      const fontSize = Math.max(18, Math.round(Math.min(img.width, img.height) * 0.035));
+      const fontSize = Math.max(14, Math.round(Math.min(img.width, img.height) * 0.028));
+      const lineHeight = Math.round(fontSize * 1.4);
       const padding = Math.round(fontSize * 1.2);
-      const text = `${formatCoordinate(lat, 6)}, ${formatCoordinate(lng, 6)}`;
+      const x = img.width - padding;
+      const coords = `${formatCoordinate(lat, 6)}, ${formatCoordinate(lng, 6)}`;
 
-      ctx.font = `${fontSize}px monospace`;
+      ctx.font = `bold ${fontSize}px monospace`;
       ctx.textAlign = "right";
       ctx.textBaseline = "bottom";
 
-      // Stroke outline
-      ctx.strokeStyle = "rgba(0, 0, 0, 0.7)";
-      ctx.lineWidth = 3;
-      ctx.lineJoin = "round";
-      ctx.strokeText(text, img.width - padding, img.height - padding);
+      const lines = [formatDatetime(datetime), placeName, coords];
 
-      // Fill text
-      ctx.fillStyle = "rgba(255, 255, 255, 0.9)";
-      ctx.fillText(text, img.width - padding, img.height - padding);
+      // Draw from bottom up
+      for (let i = 0; i < lines.length; i++) {
+        const y = img.height - padding - (lines.length - 1 - i) * lineHeight;
+
+        // Stroke outline
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.75)";
+        ctx.lineWidth = 3;
+        ctx.lineJoin = "round";
+        ctx.strokeText(lines[i], x, y);
+
+        // Fill text
+        ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
+        ctx.fillText(lines[i], x, y);
+      }
 
       canvas.toBlob(
         (blob) => {
@@ -78,6 +100,9 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [watermarkedUrl, setWatermarkedUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Datetime
+  const [datetime, setDatetime] = useState(nowISO);
 
   // Location picker state
   const [pickedLat, setPickedLat] = useState<number | null>(null);
@@ -123,7 +148,7 @@ export default function Home() {
     }
 
     try {
-      const blob = await applyWatermark(image, pickedLat, pickedLng);
+      const blob = await applyWatermark(image, datetime, pickedName, pickedLat, pickedLng);
       const url = URL.createObjectURL(blob);
       setWatermarkedUrl(url);
     } catch (err) {
@@ -137,6 +162,7 @@ export default function Home() {
     setImage(null);
     setPreview(null);
     setError(null);
+    setDatetime(nowISO());
     setPickedLat(null);
     setPickedLng(null);
     setPickedName("");
@@ -207,6 +233,19 @@ export default function Home() {
                 className="hidden"
               />
             </label>
+
+            {/* Datetime picker */}
+            <div>
+              <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 mb-1">
+                Date & Time
+              </label>
+              <input
+                type="datetime-local"
+                value={datetime}
+                onChange={(e) => setDatetime(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-lg border border-zinc-300 bg-white text-zinc-900 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50 dark:focus:ring-zinc-400"
+              />
+            </div>
 
             {/* Location picker or confirmed location */}
             {showPicker ? (
