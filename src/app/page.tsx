@@ -1,7 +1,22 @@
 "use client";
 
 /* eslint-disable @next/next/no-img-element -- blob URLs from user uploads, next/image cannot handle dynamic blobs */
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
+
+interface Suggestion {
+  label: string;
+  lat: string;
+  lon: string;
+}
+
+function useDebounce<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(timer);
+  }, [value, delay]);
+  return debounced;
+}
 
 export default function Home() {
   const [image, setImage] = useState<File | null>(null);
@@ -11,6 +26,83 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [watermarkedUrl, setWatermarkedUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Autocomplete state
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [open, setOpen] = useState(false);
+  const [highlightIdx, setHighlightIdx] = useState(-1);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const debouncedQuery = useDebounce(location.trim(), 350);
+
+  // Fetch suggestions when debounced query changes
+  useEffect(() => {
+    let cancelled = false;
+
+    if (debouncedQuery.length < 2) {
+      return () => { cancelled = true; };
+    }
+
+    fetch(`/api/geocode?q=${encodeURIComponent(debouncedQuery)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled) {
+          setSuggestions((data.suggestions as Suggestion[]) ?? []);
+          setOpen(true);
+          setHighlightIdx(-1);
+        }
+      })
+      .catch(() => {
+        // Silently ignore — user can still type and submit
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedQuery]);
+
+  // Close dropdown on click outside
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  function selectSuggestion(s: Suggestion) {
+    setLocation(s.label);
+    setOpen(false);
+    setHighlightIdx(-1);
+    inputRef.current?.focus();
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (!open || suggestions.length === 0) return;
+
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        setHighlightIdx((prev) => (prev < suggestions.length - 1 ? prev + 1 : 0));
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        setHighlightIdx((prev) => (prev > 0 ? prev - 1 : suggestions.length - 1));
+        break;
+      case "Enter":
+        if (highlightIdx >= 0) {
+          e.preventDefault();
+          selectSuggestion(suggestions[highlightIdx]);
+        }
+        break;
+      case "Escape":
+        setOpen(false);
+        setHighlightIdx(-1);
+        break;
+    }
+  }
 
   function handleImageChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0] ?? null;
@@ -34,6 +126,7 @@ export default function Home() {
 
     setLoading(true);
     setError(null);
+    setOpen(false);
 
     if (watermarkedUrl) {
       URL.revokeObjectURL(watermarkedUrl);
@@ -71,6 +164,8 @@ export default function Home() {
     setPreview(null);
     setLocation("");
     setError(null);
+    setSuggestions([]);
+    setOpen(false);
     if (watermarkedUrl) {
       URL.revokeObjectURL(watermarkedUrl);
       setWatermarkedUrl(null);
@@ -135,13 +230,42 @@ export default function Home() {
               />
             </label>
 
-            <input
-              type="text"
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              placeholder="Location name (e.g. Paris, France)"
-              className="w-full px-4 py-3 rounded-lg border border-zinc-300 bg-white text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50 dark:placeholder-zinc-500 dark:focus:ring-zinc-400"
-            />
+            {/* Location input with autocomplete */}
+            <div ref={wrapperRef} className="relative">
+              <input
+                ref={inputRef}
+                type="text"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                onKeyDown={handleKeyDown}
+                onFocus={() => {
+                  if (suggestions.length > 0) setOpen(true);
+                }}
+                placeholder="Location name (e.g. Paris, France)"
+                autoComplete="off"
+                className="w-full px-4 py-3 rounded-lg border border-zinc-300 bg-white text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50 dark:placeholder-zinc-500 dark:focus:ring-zinc-400"
+              />
+              {open && suggestions.length > 0 && debouncedQuery.length >= 2 && (
+                <ul className="absolute z-10 top-full mt-1 w-full bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg shadow-lg overflow-hidden">
+                  {suggestions.map((s, i) => (
+                    <li key={i}>
+                      <button
+                        type="button"
+                        onClick={() => selectSuggestion(s)}
+                        onMouseEnter={() => setHighlightIdx(i)}
+                        className={`w-full text-left px-4 py-2.5 text-sm border-b border-zinc-100 dark:border-zinc-700 last:border-b-0 ${
+                          i === highlightIdx
+                            ? "bg-zinc-100 dark:bg-zinc-700 text-zinc-900 dark:text-zinc-50"
+                            : "text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-750"
+                        }`}
+                      >
+                        {s.label}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
 
             {error && (
               <p className="text-red-600 dark:text-red-400 text-sm">{error}</p>
