@@ -4,19 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 
-interface Suggestion {
-  label: string;
-  lat: string;
-  lon: string;
-}
-
 interface Props {
   token: string;
   onSelect: (lat: number, lng: number, name: string) => void;
   initialName?: string;
 }
 
-// Indonesia center
 const CENTER: [number, number] = [118, -2.5];
 const ZOOM = 4.5;
 
@@ -26,12 +19,12 @@ export default function LocationPicker({ token, onSelect, initialName }: Props) 
   const marker = useRef<mapboxgl.Marker | null>(null);
 
   const [query, setQuery] = useState(initialName ?? "");
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [open, setOpen] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [selectedName, setSelectedName] = useState(initialName ?? "");
   const [selectedCoords, setSelectedCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [mapReady, setMapReady] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [hasSearched, setHasSearched] = useState(false);
 
   // Init map
   useEffect(() => {
@@ -50,7 +43,6 @@ export default function LocationPicker({ token, onSelect, initialName }: Props) 
 
     m.on("load", () => setMapReady(true));
 
-    // Click on map → place marker
     m.on("click", (e) => {
       placeMarker(e.lngLat.lat, e.lngLat.lng);
       reverseGeocode(e.lngLat.lat, e.lngLat.lng);
@@ -103,88 +95,93 @@ export default function LocationPicker({ token, onSelect, initialName }: Props) 
     }
   }
 
-  // Search autocomplete
-  function handleQueryChange(val: string) {
-    setQuery(val);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
+  async function handleSearch() {
+    const q = query.trim();
+    if (q.length < 2) return;
 
-    if (val.trim().length < 2) {
-      setSuggestions([]);
-      setOpen(false);
-      return;
-    }
+    setSearching(true);
+    setSearchError(null);
 
-    debounceRef.current = setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/geocode?q=${encodeURIComponent(val.trim())}`);
-        const data = (await res.json()) as { suggestions: Suggestion[] };
-        setSuggestions(data.suggestions ?? []);
-        setOpen((data.suggestions ?? []).length > 0);
-      } catch {
-        setSuggestions([]);
-        setOpen(false);
+    try {
+      const res = await fetch(`/api/geocode?q=${encodeURIComponent(q)}`);
+      const data = (await res.json()) as {
+        suggestions: Array<{ label: string; lat: string; lon: string }>;
+      };
+
+      if (data.suggestions.length === 0) {
+        setSearchError(`No results found for "${q}"`);
+        setSearching(false);
+        return;
       }
-    }, 350);
+
+      const top = data.suggestions[0];
+      const lat = parseFloat(top.lat);
+      const lng = parseFloat(top.lon);
+
+      setSelectedName(top.label);
+      setSelectedCoords({ lat, lng });
+      placeMarker(lat, lng);
+      map.current?.flyTo({ center: [lng, lat], zoom: 14, duration: 1200 });
+      setHasSearched(true);
+    } catch {
+      setSearchError("Search failed. Please try again.");
+    } finally {
+      setSearching(false);
+    }
   }
 
-  function selectSuggestion(s: Suggestion) {
-    setQuery(s.label);
-    setSelectedName(s.label);
-    setOpen(false);
-    setSuggestions([]);
-
-    const lat = parseFloat(s.lat);
-    const lng = parseFloat(s.lon);
-    setSelectedCoords({ lat, lng });
-
-    placeMarker(lat, lng);
-    map.current?.flyTo({ center: [lng, lat], zoom: 14, duration: 1200 });
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleSearch();
+    }
   }
 
   function handleConfirm() {
     if (!selectedCoords) return;
     onSelect(selectedCoords.lat, selectedCoords.lng, selectedName);
     setQuery(selectedName);
-    setOpen(false);
-    setSuggestions([]);
   }
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Search */}
-      <div className="relative">
+      {/* Search bar */}
+      <div className="flex gap-2">
         <input
           type="text"
           value={query}
-          onChange={(e) => handleQueryChange(e.target.value)}
-          onFocus={() => { if (suggestions.length > 0) setOpen(true); }}
-          onBlur={() => setTimeout(() => setOpen(false), 200)}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={handleKeyDown}
           placeholder="Search for a place in Indonesia..."
           autoComplete="off"
-          className="w-full px-4 py-2.5 rounded-lg border border-zinc-300 bg-white text-zinc-900 placeholder-zinc-400 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50 dark:placeholder-zinc-500 dark:focus:ring-zinc-400"
+          className="flex-1 px-4 py-2.5 rounded-lg border border-zinc-300 bg-white text-zinc-900 placeholder-zinc-400 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50 dark:placeholder-zinc-500 dark:focus:ring-zinc-400"
         />
-        {open && suggestions.length > 0 && (
-          <ul className="absolute z-20 top-full mt-1 w-full bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg shadow-lg overflow-hidden max-h-48 overflow-y-auto">
-            {suggestions.map((s, i) => (
-              <li key={i}>
-                <button
-                  type="button"
-                  onMouseDown={(e) => { e.preventDefault(); selectSuggestion(s); }}
-                  className="w-full text-left px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-700 border-b border-zinc-100 dark:border-zinc-700 last:border-b-0"
-                >
-                  {s.label}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+        <button
+          type="button"
+          onClick={handleSearch}
+          disabled={searching || query.trim().length < 2}
+          className="px-5 py-2.5 rounded-lg bg-zinc-900 text-white text-sm font-medium hover:bg-zinc-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
+        >
+          {searching ? "..." : "Search"}
+        </button>
       </div>
+
+      {searchError && (
+        <p className="text-red-600 dark:text-red-400 text-sm">{searchError}</p>
+      )}
 
       {/* Map */}
       <div
         ref={mapContainer}
         className="w-full h-72 rounded-lg border border-zinc-300 dark:border-zinc-700 overflow-hidden"
       />
+
+      {/* Help text before first search */}
+      {!hasSearched && !selectedCoords && (
+        <p className="text-xs text-zinc-400 dark:text-zinc-500 text-center">
+          Search for a place, then click the map or drag the marker to fine-tune.
+        </p>
+      )}
 
       {/* Selected info */}
       {selectedCoords && (
