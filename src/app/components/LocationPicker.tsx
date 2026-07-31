@@ -25,33 +25,44 @@ export default function LocationPicker({ token, onSelect, initialName }: Props) 
   const [selectedCoords, setSelectedCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
+  const [mapError, setMapError] = useState(false);
 
   // Init map
   useEffect(() => {
     if (!mapContainer.current || map.current) return;
 
-    mapboxgl.accessToken = token;
+    try {
+      mapboxgl.accessToken = token;
 
-    const m = new mapboxgl.Map({
-      container: mapContainer.current,
-      style: "mapbox://styles/mapbox/streets-v12",
-      center: CENTER,
-      zoom: ZOOM,
-    });
+      const m = new mapboxgl.Map({
+        container: mapContainer.current,
+        style: "mapbox://styles/mapbox/streets-v12",
+        center: CENTER,
+        zoom: ZOOM,
+      });
 
-    m.addControl(new mapboxgl.NavigationControl(), "top-right");
+      m.addControl(new mapboxgl.NavigationControl(), "top-right");
 
-    m.on("load", () => setMapReady(true));
+      m.on("load", () => setMapReady(true));
 
-    m.on("click", (e) => {
-      placeMarker(e.lngLat.lat, e.lngLat.lng);
-      reverseGeocode(e.lngLat.lat, e.lngLat.lng);
-    });
+      m.on("error", (e) => {
+        console.error("Mapbox error:", e.error?.message ?? e);
+        setMapError(true);
+      });
 
-    map.current = m;
+      m.on("click", (e) => {
+        placeMarker(e.lngLat.lat, e.lngLat.lng);
+        reverseGeocode(e.lngLat.lat, e.lngLat.lng);
+      });
+
+      map.current = m;
+    } catch (err) {
+      console.error("Map init failed:", err);
+      setTimeout(() => setMapError(true), 0);
+    }
 
     return () => {
-      m.remove();
+      map.current?.remove();
       map.current = null;
     };
   }, [token]);
@@ -173,11 +184,17 @@ export default function LocationPicker({ token, onSelect, initialName }: Props) 
       {/* Map */}
       <div
         ref={mapContainer}
-        className="w-full h-72 rounded-lg border border-zinc-300 dark:border-zinc-700 overflow-hidden"
-      />
+        className="w-full h-72 rounded-lg border border-zinc-300 dark:border-zinc-700 overflow-hidden relative"
+      >
+        {mapError && (
+          <div className="absolute inset-0 flex items-center justify-center bg-zinc-100 dark:bg-zinc-800 text-sm text-zinc-500 dark:text-zinc-400">
+            Map unavailable — search still works
+          </div>
+        )}
+      </div>
 
       {/* Help text before first search */}
-      {!hasSearched && !selectedCoords && (
+      {!hasSearched && !selectedCoords && !mapError && (
         <p className="text-xs text-zinc-400 dark:text-zinc-500 text-center">
           Search for a place, then click the map or drag the marker to fine-tune.
         </p>
