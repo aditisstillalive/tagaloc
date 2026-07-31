@@ -12,11 +12,17 @@ interface GeocodeResult {
 
 async function geocode(location: string): Promise<GeocodeResult> {
   const googleKey = process.env.GOOGLE_GEOCODING_API_KEY;
+  const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
+
+  // Try Google first, fall back to Mapbox
   if (googleKey) {
-    return geocodeGoogle(location, googleKey);
+    try {
+      return await geocodeGoogle(location, googleKey);
+    } catch {
+      // Google failed, try Mapbox below
+    }
   }
 
-  const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
   if (mapboxToken) {
     return geocodeMapbox(location, mapboxToken);
   }

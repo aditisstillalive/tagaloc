@@ -23,6 +23,10 @@ export async function GET(request: Request): Promise<NextResponse> {
 
     if (googleKey) {
       suggestions = await searchGoogle(q.trim(), googleKey);
+      // If Google returned nothing, fall back to Mapbox
+      if (suggestions.length === 0) {
+        suggestions = await searchMapbox(q.trim());
+      }
     } else {
       suggestions = await searchMapbox(q.trim());
     }
