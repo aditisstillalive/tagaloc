@@ -10,7 +10,7 @@ interface GeocodeResult {
 }
 
 async function geocode(location: string): Promise<GeocodeResult> {
-  const token = process.env.MAPBOX_ACCESS_TOKEN;
+  const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
   if (!token) {
     throw new Error("MAPBOX_ACCESS_TOKEN not configured");
   }

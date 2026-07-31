@@ -1,108 +1,24 @@
 "use client";
 
-/* eslint-disable @next/next/no-img-element -- blob URLs from user uploads, next/image cannot handle dynamic blobs */
-import { useState, useRef, useEffect } from "react";
-
-interface Suggestion {
-  label: string;
-  lat: string;
-  lon: string;
-}
-
-function useDebounce<T>(value: T, delay: number): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const timer = setTimeout(() => setDebounced(value), delay);
-    return () => clearTimeout(timer);
-  }, [value, delay]);
-  return debounced;
-}
+/* eslint-disable @next/next/no-img-element -- blob URLs, next/image cannot handle dynamic blobs */
+import { useState, useRef } from "react";
+import LocationPicker from "./components/LocationPicker";
 
 export default function Home() {
   const [image, setImage] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
-  const [location, setLocation] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [watermarkedUrl, setWatermarkedUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Autocomplete state
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [open, setOpen] = useState(false);
-  const [highlightIdx, setHighlightIdx] = useState(-1);
-  const wrapperRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const debouncedQuery = useDebounce(location.trim(), 350);
+  // Location picker state
+  const [pickedLat, setPickedLat] = useState<number | null>(null);
+  const [pickedLng, setPickedLng] = useState<number | null>(null);
+  const [pickedName, setPickedName] = useState<string>("");
+  const [showPicker, setShowPicker] = useState(true);
 
-  // Fetch suggestions when debounced query changes
-  useEffect(() => {
-    let cancelled = false;
-
-    if (debouncedQuery.length < 2) {
-      return () => { cancelled = true; };
-    }
-
-    fetch(`/api/geocode?q=${encodeURIComponent(debouncedQuery)}`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (!cancelled) {
-          setSuggestions((data.suggestions as Suggestion[]) ?? []);
-          setOpen(true);
-          setHighlightIdx(-1);
-        }
-      })
-      .catch(() => {
-        // Silently ignore — user can still type and submit
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [debouncedQuery]);
-
-  // Close dropdown on click outside
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, []);
-
-  function selectSuggestion(s: Suggestion) {
-    setLocation(s.label);
-    setOpen(false);
-    setHighlightIdx(-1);
-    inputRef.current?.focus();
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (!open || suggestions.length === 0) return;
-
-    switch (e.key) {
-      case "ArrowDown":
-        e.preventDefault();
-        setHighlightIdx((prev) => (prev < suggestions.length - 1 ? prev + 1 : 0));
-        break;
-      case "ArrowUp":
-        e.preventDefault();
-        setHighlightIdx((prev) => (prev > 0 ? prev - 1 : suggestions.length - 1));
-        break;
-      case "Enter":
-        if (highlightIdx >= 0) {
-          e.preventDefault();
-          selectSuggestion(suggestions[highlightIdx]);
-        }
-        break;
-      case "Escape":
-        setOpen(false);
-        setHighlightIdx(-1);
-        break;
-    }
-  }
+  const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN ?? "";
 
   function handleImageChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0] ?? null;
@@ -120,13 +36,19 @@ export default function Home() {
     }
   }
 
+  function handleLocationSelect(lat: number, lng: number, name: string) {
+    setPickedLat(lat);
+    setPickedLng(lng);
+    setPickedName(name);
+    setShowPicker(false);
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!image || !location.trim()) return;
+    if (!image || pickedLat == null || pickedLng == null) return;
 
     setLoading(true);
     setError(null);
-    setOpen(false);
 
     if (watermarkedUrl) {
       URL.revokeObjectURL(watermarkedUrl);
@@ -136,7 +58,8 @@ export default function Home() {
     try {
       const formData = new FormData();
       formData.append("image", image);
-      formData.append("location", location.trim());
+      // Send coordinates + name — API route will use the name for display
+      formData.append("location", pickedName);
 
       const res = await fetch("/api/watermark", {
         method: "POST",
@@ -162,10 +85,11 @@ export default function Home() {
   function handleReset() {
     setImage(null);
     setPreview(null);
-    setLocation("");
     setError(null);
-    setSuggestions([]);
-    setOpen(false);
+    setPickedLat(null);
+    setPickedLng(null);
+    setPickedName("");
+    setShowPicker(true);
     if (watermarkedUrl) {
       URL.revokeObjectURL(watermarkedUrl);
       setWatermarkedUrl(null);
@@ -174,6 +98,8 @@ export default function Home() {
       fileInputRef.current.value = "";
     }
   }
+
+  const locationReady = pickedLat != null && pickedLng != null && pickedName !== "";
 
   return (
     <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 dark:bg-zinc-950 p-4">
@@ -208,6 +134,7 @@ export default function Home() {
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+            {/* Image upload */}
             <label className="flex flex-col items-center justify-center h-48 border-2 border-dashed border-zinc-300 rounded-lg cursor-pointer hover:border-zinc-500 transition-colors dark:border-zinc-700 dark:hover:border-zinc-400">
               {preview ? (
                 <img
@@ -230,42 +157,32 @@ export default function Home() {
               />
             </label>
 
-            {/* Location input with autocomplete */}
-            <div ref={wrapperRef} className="relative">
-              <input
-                ref={inputRef}
-                type="text"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                onKeyDown={handleKeyDown}
-                onFocus={() => {
-                  if (suggestions.length > 0) setOpen(true);
-                }}
-                placeholder="Location name (e.g. Paris, France)"
-                autoComplete="off"
-                className="w-full px-4 py-3 rounded-lg border border-zinc-300 bg-white text-zinc-900 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50 dark:placeholder-zinc-500 dark:focus:ring-zinc-400"
+            {/* Location picker or confirmed location */}
+            {showPicker ? (
+              <LocationPicker
+                token={token}
+                onSelect={handleLocationSelect}
+                initialName={pickedName}
               />
-              {open && suggestions.length > 0 && debouncedQuery.length >= 2 && (
-                <ul className="absolute z-10 top-full mt-1 w-full bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded-lg shadow-lg overflow-hidden">
-                  {suggestions.map((s, i) => (
-                    <li key={i}>
-                      <button
-                        type="button"
-                        onClick={() => selectSuggestion(s)}
-                        onMouseEnter={() => setHighlightIdx(i)}
-                        className={`w-full text-left px-4 py-2.5 text-sm border-b border-zinc-100 dark:border-zinc-700 last:border-b-0 ${
-                          i === highlightIdx
-                            ? "bg-zinc-100 dark:bg-zinc-700 text-zinc-900 dark:text-zinc-50"
-                            : "text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-750"
-                        }`}
-                      >
-                        {s.label}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+            ) : (
+              <div className="flex items-center justify-between p-4 rounded-lg border border-zinc-300 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800/50">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">
+                    {pickedName}
+                  </p>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400 font-mono mt-0.5">
+                    {pickedLat?.toFixed(6)}, {pickedLng?.toFixed(6)}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowPicker(true)}
+                  className="shrink-0 ml-3 text-sm text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 underline"
+                >
+                  Change
+                </button>
+              </div>
+            )}
 
             {error && (
               <p className="text-red-600 dark:text-red-400 text-sm">{error}</p>
@@ -273,7 +190,7 @@ export default function Home() {
 
             <button
               type="submit"
-              disabled={!image || !location.trim() || loading}
+              disabled={!image || !locationReady || loading}
               className="py-3 px-4 rounded-lg bg-zinc-900 text-white font-medium hover:bg-zinc-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-200"
             >
               {loading ? "Processing..." : "Watermark"}

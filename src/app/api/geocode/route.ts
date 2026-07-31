@@ -16,7 +16,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     return NextResponse.json({ suggestions: [] });
   }
 
-  const token = process.env.MAPBOX_ACCESS_TOKEN;
+  const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
   if (!token) {
     return NextResponse.json({ suggestions: [] });
   }
